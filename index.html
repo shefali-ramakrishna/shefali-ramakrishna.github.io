@@ -1,24 +1,150 @@
 <!DOCTYPE html>
 <html>
+<head>
+<style>
+* {
+  box-sizing: border-box;
+}
+
+
+img {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 5px;
+  width: 100%;
+}
+
+body {
+  font-family: Arial;
+  padding: 10px;
+  background: #f1f1f1;
+}
+
+/* Header/Blog Title */
+.header {
+  padding: 30px;
+  text-align: center;
+  background: white;
+}
+
+.header h1 {
+  font-size: 50px;
+}
+
+/* Style the top navigation bar */
+.topnav {
+  overflow: hidden;
+  background-color: #333;
+}
+
+/* Style the topnav links */
+.topnav a {
+  float: left;
+  display: block;
+  color: #f2f2f2;
+  text-align: center;
+  padding: 14px 16px;
+  text-decoration: none;
+}
+
+/* Change color on hover */
+.topnav a:hover {
+  background-color: #ddd;
+  color: black;
+}
+
+/* Create two unequal columns that floats next to each other */
+/* Left column */
+.leftcolumn {   
+  float: left;
+  width: 75%;
+}
+
+/* Right column */
+.rightcolumn {
+  float: left;
+  width: 25%;
+  background-color: #f1f1f1;
+  padding-left: 20px;
+}
+
+/* Fake image */
+.fakeimg {
+  background-color: #aaa;
+  width: 100%;
+  padding: 20px;
+}
+
+/* Add a card effect for articles */
+.card {
+  background-color: white;
+  padding: 20px;
+  margin-top: 20px;
+}
+
+/* Clear floats after the columns */
+.row::after {
+  content: "";
+  display: table;
+  clear: both;
+}
+
+/* Footer */
+.footer {
+  padding: 20px;
+  text-align: center;
+  background: #ddd;
+  margin-top: 20px;
+}
+
+/* Responsive layout - when the screen is less than 800px wide, make the two columns stack on top of each other instead of next to each other */
+@media screen and (max-width: 800px) {
+  .leftcolumn, .rightcolumn {   
+    width: 100%;
+    padding: 0;
+  }
+}
+
+/* Responsive layout - when the screen is less than 400px wide, make the navigation links stack on top of each other instead of next to each other */
+@media screen and (max-width: 400px) {
+  .topnav a {
+    float: none;
+    width: 100%;
+  }
+}
+</style>
+</head>
 <body>
-  <div class="wrapper">
-    
-    <div class="left">
-      <img class="profile-picture" src="img/1679621787383.jpg" width="200"/>
-      <h1 class="name">Shefali Ramakrishna</h1>
-      <h4 class="subtitle">PhD Student in Operations Research at Cornell University</h4>
+
+<div class="header">
+  <h1>Shefali Ramakrishna</h1>
+  <p>Second-year PhD student in Operations Research at Cornell University</p>
+</div>
+
+<div class="topnav">
+  <a href="img/shefali-ramakrishna-CV.pdf">CV</a>
+  <a href="/publications">Publications</a>
+  <a href="https://www.linkedin.com/in/shefaliramakrishna/" style="float:right">LinkedIn</a>
+  <a href="https://arxiv.org/a/ramakrishna_s_2.html" style="float:right">arXiv</a>
+</div>
+
+<div class="row">
+  <div class="leftcolumn">
+    <div class="card">
+      <h2>ABOUT ME</h2>
+      <p>I am a second-year PhD student in Operations Research at Cornell University, working with Prof. Ziv Scully (currently on overhead-aware preemptive scheduling policies, and more broadly, on neat problems in scheduling and dispatching).</p>
+      <p>I have a bachelor's and master's degree in mathematics with honors from Bryn Mawr College, where I graduated magna cum laude. My master's thesis focused on the design and implementation of a queuing simulation for electric car charger use on campus, and won the 2022 Mathematical Association of America Outstanding Student Paper Prize.</p>
+      <p>When I’m not thinking about weird questions in queues, I enjoy birdwatching, embroidery, improv, tabletop roleplaying games, board games, video games, and Shakespeare plays.</p>
     </div>
-    
-    <div class="right">
-      <p class="bio">
-        Operations Research PhD student, queueing theory enthusiast, and avid birdwatcher.
-        Thanks for visiting my website.
-      </p>
-      <ul class="social-links">
-        <li><a href="https://www.linkedin.com/in/shefaliramakrishna/">LinkedIn</a></li>
-      </ul>
-    </div>
-    
   </div>
+  <div class="rightcolumn">
+    <div class="card">
+    <img src="https://media.licdn.com/dms/image/D4E03AQG7M0s7su4kcA/profile-displayphoto-shrink_800_800/0/1679621790759?e=1705536000&v=beta&t=2Vv_5w3Wb4Esn1NiycX82amXVEAIq_LzhEx0KOSpP18" alt="Shefali Profile Picture" style="height:100%">
+      <h2>Contact</h2>
+      <p><b>Email:</b> sr899 [at] cornell [dot] edu</p>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
