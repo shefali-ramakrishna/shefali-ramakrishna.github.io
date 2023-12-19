@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+<link href='https://fonts.googleapis.com/css?family=Karla' rel='stylesheet'>
 <style>
 * {
   box-sizing: border-box;
@@ -15,7 +16,7 @@ img {
 }
 
 body {
-  font-family: Arial;
+  font-family: Karla;
   padding: 10px;
   background: #f1f1f1;
 }
@@ -25,6 +26,7 @@ body {
   padding: 30px;
   text-align: center;
   background: white;
+  border-radius: 25px 25px 0px 0px;
 }
 
 .header h1 {
@@ -35,7 +37,29 @@ body {
 .topnav {
   overflow: hidden;
   background-color: #B31B1B;
+  border-radius: 0px 0px 25px 25px;
 }
+
+
+a:link {
+  color: #B31B1B;
+  background-color: transparent;
+  text-decoration: none;
+}
+a:visited {
+  color: #d77b6b;
+  background-color: transparent;
+  text-decoration: none;
+}
+a:hover {
+  background-color: transparent;
+  text-decoration: underline;
+}
+a:active {
+  background-color: transparent;
+  text-decoration: underline;
+}
+
 
 /* Style the topnav links */
 .topnav a {
@@ -45,6 +69,7 @@ body {
   text-align: center;
   padding: 14px 16px;
   text-decoration: none;
+  transition: 0.3s;
 }
 
 /* Change color on hover */
@@ -80,6 +105,7 @@ body {
   background-color: white;
   padding: 20px;
   margin-top: 20px;
+  border-radius: 25px;
 }
 
 /* Clear floats after the columns */
@@ -95,6 +121,7 @@ body {
   text-align: center;
   background: #ddd;
   margin-top: 20px;
+  border-radius: 25px;
 }
 
 /* Responsive layout - when the screen is less than 800px wide, make the two columns stack on top of each other instead of next to each other */
