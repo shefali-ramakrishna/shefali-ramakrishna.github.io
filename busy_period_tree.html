@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Busy Period Tree</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0f0f14;
+    font-family: 'Courier New', monospace;
+    color: #d4cfbf;
+    padding: 20px;
+  }
+  h2 {
+    text-align: center;
+    color: #c8b560;
+    letter-spacing: 3px;
+    font-size: 14px;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+  }
+  .subtitle {
+    text-align: center;
+    color: #555;
+    font-size: 11px;
+    margin-bottom: 16px;
+    letter-spacing: 1px;
+  }
+  svg { display: block; margin: 0 auto; }
+  .legend {
+    display: flex;
+    gap: 24px;
+    justify-content: center;
+    font-size: 11px;
+    color: #888;
+    margin-top: 12px;
+  }
+  .controls {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-bottom: 14px;
+    align-items: center;
+    font-size: 12px;
+  }
+  input[type=file] { color: #d4cfbf; font-family: inherit; font-size: 11px; }
+  label { color: #888; }
+</style>
+</head>
+<body>
+<h2>Two-Stage M/G/1 · Busy Period Tree</h2>
+<div class="subtitle">FCFS · Preemptive A-Priority · Chunk widths proportional to size</div>
+
+<div class="controls">
+  <label>Load simulation JSON: </label>
+  <input type="file" id="fileInput" accept=".json">
+  <label>Scale: </label>
+  <input type="range" id="scaleSlider" min="40" max="300" value="100" style="width:100px">
+  <span id="scaleVal">100px/unit</span>
+</div>
+
+<svg id="svg" width="1200" height="800"></svg>
+
+<div class="legend">
+  <span><span style="color:#e05c5c">■</span> A-chunk &nbsp;&nbsp;<span style="color:#5c9ee0">■</span> B-chunk</span>
+  <span>Numbers = service order</span>
+  <span>Tick marks = child arrival positions</span>
+</div>
+
+<script>
+const A_COLOR = '#c0453a';
+const B_COLOR = '#3a70c0';
+const A_LIGHT = '#e07060';
+const B_LIGHT = '#60a0e0';
+const EDGE_COLOR = '#888';
+const TEXT_COLOR = '#fff';
+const BG_COLOR = '#0f0f14';
+
+const ROW_HEIGHT = 80;   // vertical spacing between levels
+const CHUNK_H = 28;      // height of each chunk rectangle
+const V_PAD = 20;        // vertical padding above chunks in row
+
+let scale = 100; // pixels per time unit
+let simData = null;
+
+document.getElementById('scaleSlider').addEventListener('input', function() {
+  scale = parseInt(this.value);
+  document.getElementById('scaleVal').textContent = scale + 'px/unit';
+  if (simData) render(simData);
+});
+
+document.getElementById('fileInput').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(ev) {
+    simData = JSON.parse(ev.target.result);
+    render(simData);
+  };
+  reader.readAsText(file);
+});
+
+
+
+function render(data) {
+  const jobs = data.jobs;
+  const events = data.events;
+
+  // Build service order map: {jobId_chunkType_index -> order}
+  // Each event gets a sequential number
+  const serviceOrder = {};
+  // For jobs with multiple B segments, number them all with same order slot
+  // Actually just number each event sequentially
+  events.forEach((ev, i) => {
+    const key = `${ev.job_id}_${ev.chunk_type}`;
+    if (!serviceOrder[key]) serviceOrder[key] = [];
+    serviceOrder[key].push({ order: i + 1, start: ev.start_time, end: ev.end_time });
+  });
+
+  // Build tree structure
+  // Find root (job with no parent — job 0)
+  // Build children map from jobs data
+  const childrenOf = {}; // jobId -> [{childId, timeIntoChunk, chunkType}]
+  Object.values(jobs).forEach(job => {
+    childrenOf[job.id] = [];
+    job.children_during_a.forEach(c => {
+      childrenOf[job.id].push({ childId: c.id, timeIntoChunk: c.time_into_chunk, chunkType: 'A' });
+    });
+    job.children_during_b.forEach(c => {
+      childrenOf[job.id].push({ childId: c.id, timeIntoChunk: c.time_into_chunk, chunkType: 'B' });
+    });
+  });
+
+  // Assign tree layout positions
+  // Each node gets an x position (center of its A chunk start) and y (depth * ROW_HEIGHT)
+  // We use a simple recursive layout: compute subtree width, then center parent over children
+
+  const jobDepth = {}; // jobId -> depth
+  const jobX = {};     // jobId -> x center of node
+  const jobY = {};     // jobId -> y top of node row
+
+  // First pass: assign depths
+  function assignDepth(jobId, depth) {
+    jobDepth[jobId] = depth;
+    (childrenOf[jobId] || []).forEach(c => assignDepth(c.childId, depth + 1));
+  }
+  assignDepth(0, 0);
+
+  // Compute subtree width for layout
+  const HORIZ_GAP = 20; // gap between sibling nodes
+  function subtreeWidth(jobId) {
+    const job = jobs[jobId];
+    const nodeW = (job.a_size + job.b_size) * scale;
+    const children = childrenOf[jobId] || [];
+    if (children.length === 0) return nodeW;
+    const childrenW = children.reduce((sum, c) => sum + subtreeWidth(c.childId), 0)
+      + (children.length - 1) * HORIZ_GAP;
+    return Math.max(nodeW, childrenW);
+  }
+
+  // Assign x positions (left edge of node's A chunk)
+  function assignX(jobId, leftEdge) {
+    const job = jobs[jobId];
+    const nodeW = (job.a_size + job.b_size) * scale;
+    const sw = subtreeWidth(jobId);
+    // Center node within its subtree
+    const nodeLeft = leftEdge + (sw - nodeW) / 2;
+    jobX[jobId] = nodeLeft;
+    jobY[jobId] = jobDepth[jobId] * ROW_HEIGHT + V_PAD;
+
+    // Layout children
+    const children = childrenOf[jobId] || [];
+    let cx = leftEdge;
+    children.forEach(c => {
+      const csw = subtreeWidth(c.childId);
+      assignX(c.childId, cx);
+      cx += csw + HORIZ_GAP;
+    });
+  }
+  assignX(0, 20);
+
+  // Compute SVG size
+  const maxDepth = Math.max(...Object.values(jobDepth));
+  const svgH = (maxDepth + 1) * ROW_HEIGHT + V_PAD + CHUNK_H + 40;
+  const svgW = Math.max(1200, subtreeWidth(0) + 40);
+
+  const svg = document.getElementById('svg');
+  svg.setAttribute('width', svgW);
+  svg.setAttribute('height', svgH);
+  svg.innerHTML = '';
+
+  // Background
+  const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  bg.setAttribute('width', svgW); bg.setAttribute('height', svgH);
+  bg.setAttribute('fill', BG_COLOR);
+  svg.appendChild(bg);
+
+  // Draw edges first (behind nodes)
+  Object.values(jobs).forEach(job => {
+    const children = childrenOf[job.id] || [];
+    children.forEach(c => {
+      const childJob = jobs[c.childId];
+      const parentX = jobX[job.id];
+      const parentY = jobY[job.id];
+
+      // X position of arrival on parent chunk
+      let arrivalX;
+      if (c.chunkType === 'A') {
+        arrivalX = parentX + c.timeIntoChunk * scale;
+      } else {
+        arrivalX = parentX + job.a_size * scale + c.timeIntoChunk * scale;
+      }
+      const arrivalY = parentY + CHUNK_H;
+
+      // Child center x (top of child node)
+      const childNodeW = (childJob.a_size + childJob.b_size) * scale;
+      const childCenterX = jobX[c.childId] + childNodeW / 2;
+      const childTopY = jobY[c.childId];
+
+      // Draw edge: vertical down from arrival point, then to child
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      const midY = (arrivalY + childTopY) / 2;
+      path.setAttribute('d', `M ${arrivalX} ${arrivalY} L ${arrivalX} ${midY} L ${childCenterX} ${midY} L ${childCenterX} ${childTopY}`);
+      path.setAttribute('stroke', '#555');
+      path.setAttribute('stroke-width', '1.5');
+      path.setAttribute('fill', 'none');
+      svg.appendChild(path);
+
+      // Tick mark at arrival point on parent
+      const tick = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      tick.setAttribute('x1', arrivalX); tick.setAttribute('y1', parentY);
+      tick.setAttribute('x2', arrivalX); tick.setAttribute('y2', parentY + CHUNK_H);
+      tick.setAttribute('stroke', '#fff');
+      tick.setAttribute('stroke-width', '1');
+      tick.setAttribute('stroke-dasharray', '2,2');
+      svg.appendChild(tick);
+    });
+  });
+
+  // Draw nodes
+  Object.values(jobs).forEach(job => {
+    const x = jobX[job.id];
+    const y = jobY[job.id];
+    const aW = job.a_size * scale;
+    const bW = job.b_size * scale;
+
+    // A chunk rect
+    const aRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    aRect.setAttribute('x', x); aRect.setAttribute('y', y);
+    aRect.setAttribute('width', aW); aRect.setAttribute('height', CHUNK_H);
+    aRect.setAttribute('fill', A_COLOR);
+    aRect.setAttribute('stroke', '#333'); aRect.setAttribute('stroke-width', '1');
+    aRect.setAttribute('rx', '2');
+    svg.appendChild(aRect);
+
+    // B chunk rect
+    const bRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    bRect.setAttribute('x', x + aW); bRect.setAttribute('y', y);
+    bRect.setAttribute('width', bW); bRect.setAttribute('height', CHUNK_H);
+    bRect.setAttribute('fill', B_COLOR);
+    bRect.setAttribute('stroke', '#333'); bRect.setAttribute('stroke-width', '1');
+    bRect.setAttribute('rx', '2');
+    svg.appendChild(bRect);
+
+    // Job id label above node
+    const idLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    idLabel.setAttribute('x', x + (aW + bW) / 2);
+    idLabel.setAttribute('y', y - 5);
+    idLabel.setAttribute('text-anchor', 'middle');
+    idLabel.setAttribute('font-size', '10');
+    idLabel.setAttribute('fill', '#888');
+    idLabel.setAttribute('font-family', 'Courier New');
+    idLabel.textContent = `J${job.id}`;
+    svg.appendChild(idLabel);
+
+    // Service order numbers inside chunks
+    // A chunk: may have multiple events if... actually A is never split, so just one
+    const aKey = `${job.id}_A`;
+    const aOrders = serviceOrder[aKey] || [];
+    if (aOrders.length > 0 && aW > 16) {
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.setAttribute('x', x + aW / 2);
+      t.setAttribute('y', y + CHUNK_H / 2 + 4);
+      t.setAttribute('text-anchor', 'middle');
+      t.setAttribute('font-size', Math.min(11, aW / 2));
+      t.setAttribute('fill', TEXT_COLOR);
+      t.setAttribute('font-family', 'Courier New');
+      t.setAttribute('font-weight', 'bold');
+      t.textContent = aOrders.map(o => o.order).join(',');
+      svg.appendChild(t);
+    }
+
+    // B chunk: may have multiple segments (if preempted)
+    const bKey = `${job.id}_B`;
+    const bOrders = serviceOrder[bKey] || [];
+    // For B with multiple segments, draw sub-rects and number each
+    if (bOrders.length > 1) {
+      // Remove the plain bRect, replace with segments
+      bRect.setAttribute('fill', 'none');
+      bRect.setAttribute('stroke', 'none');
+
+      // Total B time
+      const totalBTime = bOrders.reduce((s, o) => s + (o.end - o.start), 0);
+      let segX = x + aW;
+      bOrders.forEach(seg => {
+        const segW = ((seg.end - seg.start) / totalBTime) * bW;
+        const segRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        segRect.setAttribute('x', segX); segRect.setAttribute('y', y);
+        segRect.setAttribute('width', segW); segRect.setAttribute('height', CHUNK_H);
+        segRect.setAttribute('fill', B_COLOR);
+        segRect.setAttribute('stroke', '#222'); segRect.setAttribute('stroke-width', '1');
+        svg.appendChild(segRect);
+
+        if (segW > 14) {
+          const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          t.setAttribute('x', segX + segW / 2);
+          t.setAttribute('y', y + CHUNK_H / 2 + 4);
+          t.setAttribute('text-anchor', 'middle');
+          t.setAttribute('font-size', Math.min(11, segW / 2));
+          t.setAttribute('fill', TEXT_COLOR);
+          t.setAttribute('font-family', 'Courier New');
+          t.setAttribute('font-weight', 'bold');
+          t.textContent = seg.order;
+          svg.appendChild(t);
+        }
+        segX += segW;
+      });
+    } else if (bOrders.length === 1 && bW > 16) {
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.setAttribute('x', x + aW + bW / 2);
+      t.setAttribute('y', y + CHUNK_H / 2 + 4);
+      t.setAttribute('text-anchor', 'middle');
+      t.setAttribute('font-size', Math.min(11, bW / 2));
+      t.setAttribute('fill', TEXT_COLOR);
+      t.setAttribute('font-family', 'Courier New');
+      t.setAttribute('font-weight', 'bold');
+      t.textContent = bOrders[0].order;
+      svg.appendChild(t);
+    }
+  });
+}
+</script>
+
+
+</body>
+</html>
