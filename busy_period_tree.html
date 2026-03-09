@@ -49,7 +49,7 @@
 </head>
 <body>
 <h2>Two-Stage M/G/1 · Busy Period Tree</h2>
-<div class="subtitle">FCFS · Preemptive A-Priority · Chunk widths proportional to size</div>
+<div class="subtitle">Preemptive Priority between stages · FCFS tiebreaking within stage</div>
 
 <div class="controls">
   <label>Load simulation JSON: </label>
@@ -64,7 +64,7 @@
 <div class="legend">
   <span><span style="color:#e05c5c">■</span> A-chunk &nbsp;&nbsp;<span style="color:#5c9ee0">■</span> B-chunk</span>
   <span>Numbers = service order</span>
-  <span>Tick marks = child arrival positions</span>
+  <span>Tick marks = arrival position within parent</span>
 </div>
 
 <script>
