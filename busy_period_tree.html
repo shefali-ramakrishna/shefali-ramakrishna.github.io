@@ -104,6 +104,8 @@
 
 <svg id="svg" width="1200" height="800"></svg>
 
+<canvas id="chartCanvas" width="1200" height="160" style="display:block;margin:16px auto 0;background:#0f0f14;"></canvas>
+
 <div class="legend">
   <span><span style="color:#333;border:1px solid #444;padding:0 4px">□</span> not yet arrived</span>
   <span><span style="color:#c0453a">■</span> A-chunk in system</span>
@@ -193,7 +195,6 @@ function animStep(ts) {
   if (!animPlaying) return;
   if (animLastTS !== null) {
     const wallDt = (ts - animLastTS) / 1000;
-    // 1× speed: traverse full simulation in 10 wall-seconds
     animT += wallDt * animSpeed * (animMax / 10);
     if (animT >= animMax) { animT = animMax; stopAnim(); }
   }
@@ -209,7 +210,6 @@ function buildLayout(data) {
   const jobs   = data.jobs;
   const events = data.events;
 
-  // Service order per chunk key "jobId_chunkType"
   const serviceOrder = {};
   events.forEach((ev, i) => {
     const key = `${ev.job_id}_${ev.chunk_type}`;
@@ -217,7 +217,6 @@ function buildLayout(data) {
     serviceOrder[key].push({ order: i + 1, start: ev.start_time, end: ev.end_time });
   });
 
-  // Arrival times: root = 0; others = parent chunk start + time_into_chunk
   const jobArrival = {};
   Object.keys(jobs).forEach(id => { jobArrival[id] = Infinity; });
   jobArrival[0] = 0;
@@ -227,7 +226,6 @@ function buildLayout(data) {
     const bSegs = serviceOrder[`${job.id}_B`] || [];
     const aStart = aSegs.length ? aSegs[0].start : null;
     const bStart = bSegs.length ? bSegs[0].start : null;
-
     job.children_during_a.forEach(c => {
       if (aStart !== null) jobArrival[c.id] = aStart + c.time_into_chunk;
     });
@@ -236,7 +234,6 @@ function buildLayout(data) {
     });
   });
 
-  // Children map
   const childrenOf = {};
   Object.values(jobs).forEach(job => {
     childrenOf[job.id] = [];
@@ -244,7 +241,6 @@ function buildLayout(data) {
     job.children_during_b.forEach(c => childrenOf[job.id].push({ childId: c.id, timeIntoChunk: c.time_into_chunk, chunkType: 'B' }));
   });
 
-  // Depth
   const jobDepth = {};
   function assignDepth(id, d) {
     jobDepth[id] = d;
@@ -252,7 +248,6 @@ function buildLayout(data) {
   }
   assignDepth(0, 0);
 
-  // Subtree width
   function subtreeWidth(id) {
     const job = jobs[id];
     const nw = (job.a_size + job.b_size) * scale;
@@ -262,7 +257,6 @@ function buildLayout(data) {
     return Math.max(nw, cw);
   }
 
-  // X/Y positions
   const jobX = {}, jobY = {};
   function assignX(id, left) {
     const job = jobs[id];
@@ -284,6 +278,41 @@ function buildLayout(data) {
   const svgW = Math.max(1200, subtreeWidth(0) + 40);
 
   layout = { jobs, events, serviceOrder, childrenOf, jobX, jobY, jobArrival, svgW, svgH };
+
+  // ── Precompute W_A(t) and W_B(t) ──
+  const N_SAMPLES = 800;
+  const totalTime = data.total_time;
+  const waSeries = new Float64Array(N_SAMPLES);
+  const wbSeries = new Float64Array(N_SAMPLES);
+
+  for (let i = 0; i < N_SAMPLES; i++) {
+    const t = (i / (N_SAMPLES - 1)) * totalTime;
+    let wa = 0, wb = 0;
+    Object.values(jobs).forEach(job => {
+      if (jobArrival[job.id] > t) return;
+      const aSegs = serviceOrder[`${job.id}_A`] || [];
+      let aDone = 0;
+      aSegs.forEach(seg => {
+        if (t >= seg.end)       aDone += seg.end - seg.start;
+        else if (t > seg.start) aDone += t - seg.start;
+      });
+      wa += Math.max(0, job.a_size - aDone);
+      const bSegs = serviceOrder[`${job.id}_B`] || [];
+      let bDone = 0;
+      bSegs.forEach(seg => {
+        if (t >= seg.end)       bDone += seg.end - seg.start;
+        else if (t > seg.start) bDone += t - seg.start;
+      });
+      wb += Math.max(0, job.b_size - bDone);
+    });
+    waSeries[i] = wa;
+    wbSeries[i] = wb;
+  }
+
+  layout.waSeries = waSeries;
+  layout.wbSeries = wbSeries;
+  layout.totalTime = totalTime;
+  layout.N_SAMPLES = N_SAMPLES;
 }
 
 // ── Draw frame ────────────────────────────────────────────────────────────────
@@ -324,7 +353,6 @@ function drawFrame(t) {
         'stroke-width': '1.5', fill: 'none'
       }, svg);
 
-      // Tick on parent chunk
       svgEl('line', {
         x1: ax, y1: py, x2: ax, y2: py + CHUNK_H,
         stroke: childArrived ? '#bbb' : '#2a2a3a',
@@ -341,24 +369,20 @@ function drawFrame(t) {
     const bW = job.b_size * scale;
     const arrived = jobArrival[job.id] <= t;
 
-    // ── A chunk ──
     const aSegs = serviceOrder[`${job.id}_A`] || [];
 
     if (!arrived) {
       svgEl('rect', { x, y, width: aW, height: CHUNK_H, fill: CLEAR_BG, stroke: '#2a2a3a', 'stroke-width': '1', rx: 2 }, svg);
     } else {
-      // Red background
       svgEl('rect', { x, y, width: aW, height: CHUNK_H, fill: A_COLOR, stroke: '#222', 'stroke-width': '1', rx: 2 }, svg);
-      // Grey fill proportional to work done
       let aDoneW = 0;
       aSegs.forEach(seg => {
-        if (t >= seg.end)        aDoneW += (seg.end - seg.start) * scale;
-        else if (t > seg.start)  aDoneW += (t - seg.start) * scale;
+        if (t >= seg.end)       aDoneW += (seg.end - seg.start) * scale;
+        else if (t > seg.start) aDoneW += (t - seg.start) * scale;
       });
       if (aDoneW > 0) {
         svgEl('rect', { x, y, width: Math.min(aDoneW, aW), height: CHUNK_H, fill: GREY, rx: 2 }, svg);
       }
-      // Label
       if (aSegs.length > 0 && aW > 16) {
         svgEl('text', {
           x: x + aW / 2, y: y + CHUNK_H / 2 + 4,
@@ -368,16 +392,13 @@ function drawFrame(t) {
       }
     }
 
-    // ── B chunk ──
     const bSegs = serviceOrder[`${job.id}_B`] || [];
     const totalBTime = bSegs.reduce((s, seg) => s + (seg.end - seg.start), 0);
 
     if (!arrived) {
       svgEl('rect', { x: x + aW, y, width: bW, height: CHUNK_H, fill: CLEAR_BG, stroke: '#2a2a3a', 'stroke-width': '1', rx: 2 }, svg);
     } else {
-      // Blue background
       svgEl('rect', { x: x + aW, y, width: bW, height: CHUNK_H, fill: B_COLOR, stroke: '#222', 'stroke-width': '1', rx: 2 }, svg);
-      // Grey fill
       let bDoneTime = 0;
       bSegs.forEach(seg => {
         if (t >= seg.end)       bDoneTime += (seg.end - seg.start);
@@ -387,7 +408,6 @@ function drawFrame(t) {
       if (bDoneW > 0) {
         svgEl('rect', { x: x + aW, y, width: Math.min(bDoneW, bW), height: CHUNK_H, fill: GREY, rx: 2 }, svg);
       }
-      // Labels
       if (bSegs.length === 1 && bW > 16) {
         svgEl('text', {
           x: x + aW + bW / 2, y: y + CHUNK_H / 2 + 4,
@@ -412,13 +432,96 @@ function drawFrame(t) {
       }
     }
 
-    // Job label above
     svgEl('text', {
       x: x + (aW + bW) / 2, y: y - 5,
       'text-anchor': 'middle', 'font-size': '10',
       fill: arrived ? '#aaa' : '#333', 'font-family': 'Courier New'
     }, svg, `J${job.id}`);
   });
+
+  drawChart(t);
+}
+
+// ── Chart ─────────────────────────────────────────────────────────────────────
+
+function drawChart(t) {
+  if (!layout || !layout.waSeries) return;
+  const { waSeries, wbSeries, totalTime, N_SAMPLES } = layout;
+
+  const canvas = document.getElementById('chartCanvas');
+  const W = canvas.width, H = canvas.height;
+  const PAD = { top: 18, right: 20, bottom: 28, left: 48 };
+  const plotW = W - PAD.left - PAD.right;
+  const plotH = H - PAD.top - PAD.bottom;
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#0f0f14';
+  ctx.fillRect(0, 0, W, H);
+
+  const maxW = Math.max(...waSeries, ...wbSeries, 0.01);
+  const curIdx = Math.min(Math.round((t / totalTime) * (N_SAMPLES - 1)), N_SAMPLES - 1);
+
+  const tx = i => PAD.left + (i / (N_SAMPLES - 1)) * plotW;
+  const ty = v => PAD.top + plotH - (v / maxW) * plotH;
+
+  // Grid lines
+  ctx.strokeStyle = '#1e1e2a'; ctx.lineWidth = 1;
+  for (let g = 0; g <= 4; g++) {
+    const y = PAD.top + (g / 4) * plotH;
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + plotW, y); ctx.stroke();
+    ctx.fillStyle = '#444'; ctx.font = '10px Courier New'; ctx.textAlign = 'right';
+    ctx.fillText(((4 - g) / 4 * maxW).toFixed(1), PAD.left - 4, y + 3);
+  }
+
+  // Axes
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top); ctx.lineTo(PAD.left, PAD.top + plotH); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top + plotH); ctx.lineTo(PAD.left + plotW, PAD.top + plotH); ctx.stroke();
+
+  // X axis labels
+  ctx.fillStyle = '#444'; ctx.font = '10px Courier New'; ctx.textAlign = 'center';
+  for (let g = 0; g <= 5; g++) {
+    ctx.fillText(((g / 5) * totalTime).toFixed(1), PAD.left + (g / 5) * plotW, PAD.top + plotH + 14);
+  }
+
+  function drawSeries(series, color, dimColor) {
+    ctx.beginPath();
+    ctx.strokeStyle = dimColor; ctx.lineWidth = 1.5;
+    ctx.moveTo(tx(0), ty(series[0]));
+    for (let i = 1; i < N_SAMPLES; i++) ctx.lineTo(tx(i), ty(series[i]));
+    ctx.stroke();
+    if (curIdx > 0) {
+      ctx.beginPath();
+      ctx.strokeStyle = color; ctx.lineWidth = 2;
+      ctx.moveTo(tx(0), ty(series[0]));
+      for (let i = 1; i <= curIdx; i++) ctx.lineTo(tx(i), ty(series[i]));
+      ctx.stroke();
+    }
+  }
+
+  drawSeries(wbSeries, B_COLOR, '#1a2a40');
+  drawSeries(waSeries, A_COLOR, '#2a1a1a');
+
+  // Current time bar
+  const cx = tx(curIdx);
+  ctx.strokeStyle = '#c8b560'; ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(cx, PAD.top); ctx.lineTo(cx, PAD.top + plotH); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Legend
+  ctx.font = '10px Courier New'; ctx.textAlign = 'left';
+  ctx.fillStyle = A_COLOR; ctx.fillRect(PAD.left + 4, PAD.top + 4, 12, 3);
+  ctx.fillStyle = '#aaa'; ctx.fillText('W_A', PAD.left + 20, PAD.top + 10);
+  ctx.fillStyle = B_COLOR; ctx.fillRect(PAD.left + 60, PAD.top + 4, 12, 3);
+  ctx.fillStyle = '#aaa'; ctx.fillText('W_B', PAD.left + 76, PAD.top + 10);
+
+  // Y axis label
+  ctx.save(); ctx.translate(12, PAD.top + plotH / 2);
+  ctx.rotate(-Math.PI / 2); ctx.textAlign = 'center';
+  ctx.fillStyle = '#555'; ctx.font = '10px Courier New';
+  ctx.fillText('work in system', 0, 0); ctx.restore();
 }
 
 // ── SVG helper ────────────────────────────────────────────────────────────────
