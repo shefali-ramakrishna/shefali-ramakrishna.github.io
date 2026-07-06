@@ -333,7 +333,7 @@ async function loadMySessions() {
         </div>
       </div>`).join('');
   } catch (e) {
-    listEl.innerHTML = '<div class="lb-empty">Couldn\'t load past sessions.</div>';
+    listEl.innerHTML = '<div class="lb-empty">Couldn\'t load past sessions: ' + e.message + '</div>';
   }
 }
 
@@ -342,9 +342,14 @@ async function startNewSession() {
   const btn = document.getElementById('start-session-btn');
   btn.disabled = true; btn.textContent = 'Starting…';
   const code = genCode();
-  await db.ref('sessions/' + code).set({ pending: {}, approved: {}, createdAt: Date.now(), hostUid: currentUser.uid });
-  btn.disabled = false; btn.textContent = 'Start new session';
-  openTeacherSession(code);
+  try {
+    await db.ref('sessions/' + code).set({ pending: {}, approved: {}, createdAt: Date.now(), hostUid: currentUser.uid });
+    btn.disabled = false; btn.textContent = 'Start new session';
+    openTeacherSession(code);
+  } catch (err) {
+    btn.disabled = false; btn.textContent = 'Start new session';
+    alert('Could not start session: ' + err.message);
+  }
 }
 
 async function openTeacherSession(code) {
