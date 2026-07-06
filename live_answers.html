@@ -356,11 +356,6 @@ async function startNewSession() {
 
 async function openTeacherSession(code) {
   if (!currentUser) { alert('Sign in first.'); return; }
-  const snap = await db.ref('sessions/' + code + '/hostUid').get();
-  if (snap.val() !== currentUser.uid) {
-    alert("You don't have host access to this session.");
-    return;
-  }
   currentCode = code;
   document.getElementById('teacher-session-code').textContent = code;
   show('view-teacher-session');
@@ -370,6 +365,8 @@ async function openTeacherSession(code) {
     const data = snap.val() || { pending: {}, approved: {} };
     renderPending(data.pending || {});
     renderApproved(data.approved || {});
+  }, err => {
+    alert("Couldn't open this session: " + err.message);
   });
 }
 
