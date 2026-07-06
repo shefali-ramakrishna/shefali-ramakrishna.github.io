@@ -231,6 +231,24 @@
   <div id="student-approved-grid"></div>
 </div>
 
+<!-- ====================== FIREBASE SETUP ======================
+1. Go to https://console.firebase.google.com, create a free project.
+2. In the project, click "Build > Realtime Database" and create a database
+   (choose "start in test mode" for a quick start, or use the rules below).
+3. In Project Settings > General, scroll to "Your apps," click the web icon (</>),
+   register an app (no hosting needed), and copy the firebaseConfig object it gives you.
+4. Paste that config into firebaseConfig below, replacing the placeholder.
+5. Recommended Realtime Database rules (Database > Rules tab) so anyone can read/write
+   only inside "sessions" — good enough for a classroom tool with no login:
+   {
+     "rules": {
+       "sessions": {
+         ".read": true,
+         ".write": true
+       }
+     }
+   }
+================================================================= -->
 <script>
   window.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] } };
 </script>
@@ -238,8 +256,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-check-compat.js"></script>
 <script>
+// ---- PASTE YOUR FIREBASE CONFIG HERE ----
 const firebaseConfig = {
   apiKey: "AIzaSyDG8wPU5rHd0AYsrj2n02WWdB63aCPZ8Io",
   authDomain: "live-answers.firebaseapp.com",
@@ -251,14 +269,9 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 
-const RECAPTCHA_SITE_KEY = "6LeVAkgtAAAAAMTN_40yCxQRi5M4dePUWt90YA0T";
-firebase.appCheck().activate(RECAPTCHA_SITE_KEY, true);
 const db = firebase.database();
 const auth = firebase.auth();
 let currentUser = null;
-
-const ALLOWED_HOST_EMAIL = "taxicabnumber1729@gmail.com";
-
 auth.onAuthStateChanged(u => {
   if (u && u.email !== ALLOWED_HOST_EMAIL) {
     auth.signOut();
@@ -291,6 +304,8 @@ function goStudentJoin() {
   show('view-student-join');
 }
 
+const ALLOWED_HOST_EMAIL = "taxicabnumber1729@gmail.com";
+
 function signIn() {
   const provider = new firebase.auth.GoogleAuthProvider();
   auth.signInWithPopup(provider)
@@ -307,7 +322,7 @@ function signOutUser() { auth.signOut(); }
 function updateAuthUI() {
   const signedOutBlock = document.getElementById('signed-out-block');
   const signedInBlock = document.getElementById('signed-in-block');
-  if (!signedOutBlock) return;
+  if (!signedOutBlock) return; // not on teacher-home view yet
   if (currentUser) {
     signedOutBlock.classList.add('hidden');
     signedInBlock.classList.remove('hidden');
@@ -489,6 +504,7 @@ async function clearApproved() {
   await db.ref('sessions/' + currentCode + '/approved').remove();
 }
 
+// ---------- display screen ----------
 let displayRef = null;
 function openDisplay() {
   window.open(window.location.pathname + '?display=' + currentCode, '_blank');
@@ -520,6 +536,7 @@ function closeDisplay() {
   show('view-teacher-session');
 }
 
+// ---------- student flow ----------
 async function tryJoinSession() {
   const code = document.getElementById('join-code-input').value.trim();
   const errEl = document.getElementById('join-error');
