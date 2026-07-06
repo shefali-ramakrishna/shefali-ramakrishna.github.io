@@ -207,6 +207,8 @@
     </div>
     <div class="lb-sub" style="margin-top:10px">Your name is never collected — this is fully anonymous.</div>
   </div>
+  <div class="lb-section-label"><span>On screen</span></div>
+  <div id="student-approved-grid"></div>
 </div>
 
 <!-- ====================== FIREBASE SETUP ======================
@@ -245,6 +247,7 @@ const db = firebase.database();
 
 let currentCode = null;
 let currentTeacherRef = null;
+let studentApprovedRef = null;
 
 function show(id) {
   ['view-role','view-teacher-home','view-teacher-session','view-display','view-student-join','view-student-submit']
@@ -341,10 +344,13 @@ async function clearApproved() {
 // ---------- display screen ----------
 let displayRef = null;
 function openDisplay() {
-  document.getElementById('display-code').textContent = currentCode;
+  window.open(window.location.pathname + '?display=' + currentCode, '_blank');
+}
+function loadDisplayMode(code) {
+  currentCode = code;
+  document.getElementById('display-code').textContent = code;
   show('view-display');
-  if (displayRef) displayRef.off();
-  displayRef = db.ref('sessions/' + currentCode + '/approved');
+  displayRef = db.ref('sessions/' + code + '/approved');
   displayRef.on('value', snap => {
     const approvedObj = snap.val() || {};
     const entries = Object.entries(approvedObj).sort((a,b) => (a[1].approvedAt||0)-(b[1].approvedAt||0));
@@ -379,6 +385,21 @@ async function tryJoinSession() {
   document.getElementById('answer-text').value = '';
   document.getElementById('submitted-banner').classList.add('hidden');
   show('view-student-submit');
+  if (studentApprovedRef) studentApprovedRef.off();
+  studentApprovedRef = db.ref('sessions/' + code + '/approved');
+  studentApprovedRef.on('value', snap => {
+    const approvedObj = snap.val() || {};
+    const entries = Object.entries(approvedObj).sort((a,b) => (a[1].approvedAt||0)-(b[1].approvedAt||0));
+    const grid = document.getElementById('student-approved-grid');
+    if (entries.length === 0) {
+      grid.innerHTML = '<div class="lb-empty">Nothing on screen yet.</div>';
+      return;
+    }
+    grid.innerHTML = entries.map(([id, item]) => `
+      <div class="lb-answer-card" style="opacity:0.85">
+        <div class="lb-answer-text">${escapeHtml(item.text)}</div>
+      </div>`).join('');
+  });
 }
 
 async function submitAnswer() {
