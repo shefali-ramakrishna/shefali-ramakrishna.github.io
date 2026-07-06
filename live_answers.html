@@ -152,6 +152,10 @@
         <span class="lb-sub" id="signed-in-as" style="margin-top:0"></span>
         <button class="lb-btn lb-ghost" onclick="signOutUser()">Sign out</button>
       </div>
+      <div class="lb-sub" style="margin-bottom:6px;">Session title (e.g. "Lecture 12")</div>
+      <input type="text" id="new-session-title" placeholder="Lecture 12" style="margin-bottom:14px;">
+      <div class="lb-sub" style="margin-bottom:6px;">Question — LaTeX ok, use $...$ for inline math</div>
+      <textarea class="lb-textarea" id="new-session-question" placeholder="e.g. Compute $\int_0^1 x^2\,dx$" style="margin-bottom:14px;"></textarea>
       <button class="lb-btn" onclick="startNewSession()" id="start-session-btn">Start new session</button>
       <div class="lb-section-label" style="margin-top:28px">Your recent sessions</div>
       <div id="my-sessions-list"><div class="lb-empty">Loading…</div></div>
@@ -163,6 +167,10 @@
   <button class="lb-back-link" onclick="goTeacherHome()">&larr; Back</button>
   <div class="lb-eyebrow">Host session</div>
   <h1 class="lb-title">Review answers</h1>
+  <div class="lb-card" id="teacher-question-card" style="margin-bottom:16px; display:none;">
+    <div class="lb-eyebrow" id="teacher-session-title"></div>
+    <div id="teacher-session-question" style="font-size:17px; line-height:1.5;"></div>
+  </div>
   <div class="lb-card">
     <div class="lb-row" style="justify-content:space-between">
       <div>
@@ -181,9 +189,10 @@
 
 <div id="view-display" class="lb-display hidden">
   <div class="lb-display-header">
-    <h1>Live answers</h1>
+    <h1 id="display-title">Live answers</h1>
     <div class="lb-display-code">join at this page with code <span id="display-code"></span></div>
   </div>
+  <div id="display-question" style="font-size:20px; line-height:1.5; margin-bottom:28px; color:var(--chalk);"></div>
   <div class="lb-display-grid" id="display-grid"></div>
 </div>
 
@@ -203,11 +212,16 @@
   <button class="lb-back-link" onclick="goStudentJoin()">&larr; Different code</button>
   <div class="lb-eyebrow">Session <span id="student-code-label"></span></div>
   <h1 class="lb-title">Post your answer</h1>
+  <div class="lb-card" id="student-question-card" style="margin-bottom:16px; display:none;">
+    <div class="lb-eyebrow" id="student-session-title"></div>
+    <div id="student-session-question" style="font-size:17px; line-height:1.5;"></div>
+  </div>
   <div class="lb-card">
     <div class="lb-submitted-banner hidden" id="submitted-banner">
       Sent. It'll show up on screen once your host approves it. You can send another below.
     </div>
-    <textarea class="lb-textarea" id="answer-text" placeholder="Type your answer…"></textarea>
+    <textarea class="lb-textarea" id="answer-text" placeholder="Type your answer… (LaTeX ok, e.g. $x^2$)" maxlength="500" oninput="updateCharCount()"></textarea>
+    <div class="lb-sub" id="char-count" style="text-align:right; margin-top:4px;">500 characters left</div>
     <div style="margin-top:12px">
       <button class="lb-btn" onclick="submitAnswer()" id="submit-answer-btn">Submit answer</button>
     </div>
@@ -235,6 +249,10 @@
      }
    }
 ================================================================= -->
+<script>
+  window.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] } };
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-mml-chtml.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -321,16 +339,20 @@ async function loadMySessions() {
   try {
     const snap = await db.ref('hostSessions/' + currentUser.uid).get();
     const val = snap.val() || {};
-    const entries = Object.entries(val).sort((a,b) => (b[1]||0)-(a[1]||0)).slice(0, 5);
+    const entries = Object.entries(val).sort((a,b) => (b[1].createdAt||0)-(a[1].createdAt||0)).slice(0, 10);
     if (entries.length === 0) {
       listEl.innerHTML = '<div class="lb-empty">No sessions yet.</div>';
       return;
     }
-    listEl.innerHTML = entries.map(([code]) => `
+    listEl.innerHTML = entries.map(([code, info]) => `
       <div class="lb-answer-card">
-        <div class="lb-answer-text" style="font-family:'Courier New',monospace;font-size:20px;">${code}</div>
+        <div class="lb-answer-text">
+          <div style="font-family:'Courier New',monospace;font-size:20px;">${code}</div>
+          ${info.title ? `<div class="lb-sub" style="margin-top:4px;">${escapeHtml(info.title)}</div>` : ''}
+        </div>
         <div class="lb-answer-actions">
           <button class="lb-btn" style="padding:8px 14px;" onclick="openTeacherSession('${code}')">Open</button>
+          <button class="lb-icon-btn reject" onclick="deleteSession('${code}')" title="Delete">✕</button>
         </div>
       </div>`).join('');
   } catch (e) {
@@ -338,17 +360,38 @@ async function loadMySessions() {
   }
 }
 
+async function deleteSession(code) {
+  if (!confirm('Delete session ' + code + '? This removes all its data permanently.')) return;
+  try {
+    await db.ref('sessions/' + code + '/meta').remove();
+    await db.ref('sessions/' + code + '/exists').remove();
+    await db.ref('sessions/' + code + '/pending').remove();
+    await db.ref('sessions/' + code + '/approved').remove();
+    await db.ref('sessions/' + code + '/createdAt').remove();
+    await db.ref('sessions/' + code + '/hostUid').remove();
+    await db.ref('hostSessions/' + currentUser.uid + '/' + code).remove();
+    loadMySessions();
+  } catch (err) {
+    alert("Couldn't delete session: " + err.message);
+  }
+}
+
 async function startNewSession() {
   if (!currentUser) return;
   const btn = document.getElementById('start-session-btn');
+  const title = document.getElementById('new-session-title').value.trim();
+  const question = document.getElementById('new-session-question').value.trim();
   btn.disabled = true; btn.textContent = 'Starting…';
   const code = genCode();
   try {
     await db.ref('sessions/' + code + '/hostUid').set(currentUser.uid);
     await db.ref('sessions/' + code + '/createdAt').set(Date.now());
     await db.ref('sessions/' + code + '/exists').set(true);
-    await db.ref('hostSessions/' + currentUser.uid + '/' + code).set(Date.now());
+    await db.ref('sessions/' + code + '/meta').set({ title, question });
+    await db.ref('hostSessions/' + currentUser.uid + '/' + code).set({ createdAt: Date.now(), title });
     btn.disabled = false; btn.textContent = 'Start new session';
+    document.getElementById('new-session-title').value = '';
+    document.getElementById('new-session-question').value = '';
     openTeacherSession(code);
   } catch (err) {
     btn.disabled = false; btn.textContent = 'Start new session';
@@ -361,6 +404,10 @@ async function openTeacherSession(code) {
   currentCode = code;
   document.getElementById('teacher-session-code').textContent = code;
   show('view-teacher-session');
+  try {
+    const metaSnap = await db.ref('sessions/' + code + '/meta').get();
+    renderQuestionBlock('teacher', metaSnap.val());
+  } catch (e) { /* meta is optional, ignore errors */ }
   if (currentTeacherPendingRef) currentTeacherPendingRef.off();
   if (currentTeacherApprovedRef) currentTeacherApprovedRef.off();
   currentTeacherPendingRef = db.ref('sessions/' + code + '/pending');
@@ -371,6 +418,35 @@ async function openTeacherSession(code) {
   currentTeacherApprovedRef.on('value', snap => {
     renderApproved(snap.val() || {});
   }, err => alert("Couldn't load approved answers: " + err.message));
+}
+
+function renderQuestionBlock(context, meta) {
+  if (context === 'display') {
+    const titleH1 = document.getElementById('display-title');
+    const questionEl = document.getElementById('display-question');
+    titleH1.textContent = (meta && meta.title) ? meta.title : 'Live answers';
+    questionEl.innerHTML = (meta && meta.question) ? escapeHtml(meta.question).replace(/\n/g, '<br>') : '';
+    if (window.MathJax && window.MathJax.typesetPromise) {
+      window.MathJax.typesetPromise([questionEl]).catch(() => {});
+    }
+    return;
+  }
+  const cardId = context + '-question-card';
+  const titleId = context + '-session-title';
+  const questionId = context + '-session-question';
+  const card = document.getElementById(cardId);
+  const titleEl = document.getElementById(titleId);
+  const questionEl = document.getElementById(questionId);
+  if (!meta || (!meta.title && !meta.question)) {
+    if (card) card.style.display = 'none';
+    return;
+  }
+  if (titleEl) titleEl.textContent = meta.title || '';
+  if (questionEl) questionEl.innerHTML = escapeHtml(meta.question || '').replace(/\n/g, '<br>');
+  if (card) card.style.display = 'block';
+  if (window.MathJax && window.MathJax.typesetPromise) {
+    window.MathJax.typesetPromise([questionEl]).catch(() => {});
+  }
 }
 
 function renderPending(pendingObj) {
@@ -389,6 +465,9 @@ function renderPending(pendingObj) {
         <button class="lb-icon-btn reject" onclick="rejectAnswer('${id}')" title="Dismiss">✕</button>
       </div>
     </div>`).join('');
+  if (window.MathJax && window.MathJax.typesetPromise) {
+    window.MathJax.typesetPromise([list]).catch(() => {});
+  }
 }
 
 function renderApproved(approvedObj) {
@@ -404,6 +483,9 @@ function renderApproved(approvedObj) {
     <div class="lb-answer-card" style="opacity:0.75">
       <div class="lb-answer-text">${escapeHtml(item.text)}</div>
     </div>`).join('');
+  if (window.MathJax && window.MathJax.typesetPromise) {
+    window.MathJax.typesetPromise([list]).catch(() => {});
+  }
 }
 
 async function approveAnswer(id) {
@@ -430,6 +512,9 @@ function loadDisplayMode(code) {
   currentCode = code;
   document.getElementById('display-code').textContent = code;
   show('view-display');
+  db.ref('sessions/' + code + '/meta').get()
+    .then(snap => renderQuestionBlock('display', snap.val()))
+    .catch(() => renderQuestionBlock('display', null));
   displayRef = db.ref('sessions/' + code + '/approved');
   displayRef.on('value', snap => {
     const approvedObj = snap.val() || {};
@@ -440,6 +525,9 @@ function loadDisplayMode(code) {
       return;
     }
     grid.innerHTML = entries.map(([id, item]) => `<div class="lb-display-answer">${escapeHtml(item.text)}</div>`).join('');
+    if (window.MathJax && window.MathJax.typesetPromise) {
+      window.MathJax.typesetPromise([grid]).catch(() => {});
+    }
   });
 }
 function closeDisplay() {
@@ -472,6 +560,9 @@ async function tryJoinSession() {
   document.getElementById('answer-text').value = '';
   document.getElementById('submitted-banner').classList.add('hidden');
   show('view-student-submit');
+  db.ref('sessions/' + code + '/meta').get()
+    .then(metaSnap => renderQuestionBlock('student', metaSnap.val()))
+    .catch(() => renderQuestionBlock('student', null));
   if (studentApprovedRef) studentApprovedRef.off();
   studentApprovedRef = db.ref('sessions/' + code + '/approved');
   studentApprovedRef.on('value', snap => {
@@ -486,20 +577,43 @@ async function tryJoinSession() {
       <div class="lb-answer-card" style="opacity:0.85">
         <div class="lb-answer-text">${escapeHtml(item.text)}</div>
       </div>`).join('');
+    if (window.MathJax && window.MathJax.typesetPromise) {
+      window.MathJax.typesetPromise([grid]).catch(() => {});
+    }
   });
 }
+
+function updateCharCount() {
+  const el = document.getElementById('answer-text');
+  const remaining = 500 - el.value.length;
+  document.getElementById('char-count').textContent = remaining + ' characters left';
+}
+
+let lastSubmitTime = 0;
+const SUBMIT_COOLDOWN_MS = 4000;
 
 async function submitAnswer() {
   const textEl = document.getElementById('answer-text');
   const text = textEl.value.trim();
   if (!text) return;
+  if (text.length > 500) {
+    alert('Answers are limited to 500 characters.');
+    return;
+  }
+  const now = Date.now();
+  if (now - lastSubmitTime < SUBMIT_COOLDOWN_MS) {
+    alert('Please wait a few seconds before submitting again.');
+    return;
+  }
   const btn = document.getElementById('submit-answer-btn');
   btn.disabled = true; btn.textContent = 'Sending…';
   const id = genId();
   try {
     await db.ref('sessions/' + currentCode + '/pending/' + id).set({ text, submittedAt: Date.now() });
+    lastSubmitTime = now;
     document.getElementById('submitted-banner').classList.remove('hidden');
     textEl.value = '';
+    updateCharCount();
   } catch (err) {
     alert("Couldn't submit: " + err.message);
   }
