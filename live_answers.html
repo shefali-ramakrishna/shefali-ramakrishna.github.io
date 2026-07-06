@@ -143,11 +143,18 @@
   <div class="lb-eyebrow">Host</div>
   <h1 class="lb-title">Start or reopen a session</h1>
   <div class="lb-card">
-    <button class="lb-btn" onclick="startNewSession()" id="start-session-btn">Start new session</button>
-    <div class="lb-section-label" style="margin-top:28px">Reopen existing session</div>
-    <div class="lb-row">
-      <input type="text" id="rejoin-code" placeholder="4-digit code" maxlength="4" style="max-width:140px" oninput="this.value=this.value.replace(/\D/g,'')">
-      <button class="lb-btn lb-ghost" onclick="rejoinSession()">Open</button>
+    <div id="signed-out-block">
+      <p class="lb-sub" style="margin-top:0">Sign in with Google to host — only you will be able to moderate sessions started under your account.</p>
+      <button class="lb-btn" onclick="signIn()">Sign in with Google</button>
+    </div>
+    <div id="signed-in-block" class="hidden">
+      <div class="lb-row" style="justify-content:space-between; margin-bottom:18px;">
+        <span class="lb-sub" id="signed-in-as" style="margin-top:0"></span>
+        <button class="lb-btn lb-ghost" onclick="signOutUser()">Sign out</button>
+      </div>
+      <button class="lb-btn" onclick="startNewSession()" id="start-session-btn">Start new session</button>
+      <div class="lb-section-label" style="margin-top:28px">Your recent sessions</div>
+      <div id="my-sessions-list"><div class="lb-empty">Loading…</div></div>
     </div>
   </div>
 </div>
@@ -173,10 +180,9 @@
 </div>
 
 <div id="view-display" class="lb-display hidden">
-  <button class="lb-back-link" style="color:var(--chalk)" onclick="closeDisplay()">&larr; Back to review</button>
   <div class="lb-display-header">
     <h1>Live answers</h1>
-    <div class="lb-display-code">code <span id="display-code"></span></div>
+    <div class="lb-display-code">join at this page with code <span id="display-code"></span></div>
   </div>
   <div class="lb-display-grid" id="display-grid"></div>
 </div>
@@ -231,6 +237,7 @@
 ================================================================= -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script>
 // ---- PASTE YOUR FIREBASE CONFIG HERE ----
 const firebaseConfig = {
@@ -244,6 +251,18 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
+const auth = firebase.auth();
+let currentUser = null;
+auth.onAuthStateChanged(u => {
+  if (u && u.email !== ALLOWED_HOST_EMAIL) {
+    auth.signOut();
+    currentUser = null;
+    updateAuthUI();
+    return;
+  }
+  currentUser = u;
+  updateAuthUI();
+});
 
 let currentCode = null;
 let currentTeacherRef = null;
@@ -258,29 +277,83 @@ function show(id) {
 function genCode() { return String(Math.floor(1000 + Math.random() * 9000)); }
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
-// ---------- role navigation ----------
-function goTeacherHome() { show('view-teacher-home'); }
+function goTeacherHome() { show('view-teacher-home'); updateAuthUI(); }
 function goStudentJoin() {
   document.getElementById('join-error').textContent = '';
   document.getElementById('join-code-input').value = '';
   show('view-student-join');
 }
 
-// ---------- teacher: start / reopen ----------
+const ALLOWED_HOST_EMAIL = "taxicabnumber1729@gmail.com";
+
+function signIn() {
+  const provider = new firebase.auth.GoogleAuthProvider();
+  auth.signInWithPopup(provider)
+    .then(result => {
+      if (result.user.email !== ALLOWED_HOST_EMAIL) {
+        auth.signOut();
+        alert("This tool is only set up for one host account. Signed out.");
+      }
+    })
+    .catch(err => alert('Sign-in failed: ' + err.message));
+}
+function signOutUser() { auth.signOut(); }
+
+function updateAuthUI() {
+  const signedOutBlock = document.getElementById('signed-out-block');
+  const signedInBlock = document.getElementById('signed-in-block');
+  if (!signedOutBlock) return; // not on teacher-home view yet
+  if (currentUser) {
+    signedOutBlock.classList.add('hidden');
+    signedInBlock.classList.remove('hidden');
+    document.getElementById('signed-in-as').textContent = 'Signed in as ' + (currentUser.email || currentUser.displayName);
+    loadMySessions();
+  } else {
+    signedOutBlock.classList.remove('hidden');
+    signedInBlock.classList.add('hidden');
+  }
+}
+
+async function loadMySessions() {
+  const listEl = document.getElementById('my-sessions-list');
+  listEl.innerHTML = '<div class="lb-empty">Loading…</div>';
+  try {
+    const snap = await db.ref('sessions').orderByChild('hostUid').equalTo(currentUser.uid).get();
+    const val = snap.val() || {};
+    const entries = Object.entries(val).sort((a,b) => (b[1].createdAt||0)-(a[1].createdAt||0)).slice(0, 5);
+    if (entries.length === 0) {
+      listEl.innerHTML = '<div class="lb-empty">No sessions yet.</div>';
+      return;
+    }
+    listEl.innerHTML = entries.map(([code]) => `
+      <div class="lb-answer-card">
+        <div class="lb-answer-text" style="font-family:'Courier New',monospace;font-size:20px;">${code}</div>
+        <div class="lb-answer-actions">
+          <button class="lb-btn" style="padding:8px 14px;" onclick="openTeacherSession('${code}')">Open</button>
+        </div>
+      </div>`).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div class="lb-empty">Couldn\'t load past sessions.</div>';
+  }
+}
+
 async function startNewSession() {
+  if (!currentUser) return;
   const btn = document.getElementById('start-session-btn');
   btn.disabled = true; btn.textContent = 'Starting…';
   const code = genCode();
-  await db.ref('sessions/' + code).set({ pending: {}, approved: {}, createdAt: Date.now() });
+  await db.ref('sessions/' + code).set({ pending: {}, approved: {}, createdAt: Date.now(), hostUid: currentUser.uid });
   btn.disabled = false; btn.textContent = 'Start new session';
   openTeacherSession(code);
 }
-function rejoinSession() {
-  const code = document.getElementById('rejoin-code').value.trim();
-  if (code.length === 4) openTeacherSession(code);
-}
 
-function openTeacherSession(code) {
+async function openTeacherSession(code) {
+  if (!currentUser) { alert('Sign in first.'); return; }
+  const snap = await db.ref('sessions/' + code + '/hostUid').get();
+  if (snap.val() !== currentUser.uid) {
+    alert("You don't have host access to this session.");
+    return;
+  }
   currentCode = code;
   document.getElementById('teacher-session-code').textContent = code;
   show('view-teacher-session');
@@ -421,7 +494,13 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-show('view-role');
+const urlParams = new URLSearchParams(window.location.search);
+const displayCodeParam = urlParams.get('display');
+if (displayCodeParam && /^\d{4}$/.test(displayCodeParam)) {
+  loadDisplayMode(displayCodeParam);
+} else {
+  show('view-role');
+}
 </script>
 </body>
 </html>
