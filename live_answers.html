@@ -265,7 +265,8 @@ auth.onAuthStateChanged(u => {
 });
 
 let currentCode = null;
-let currentTeacherRef = null;
+let currentTeacherPendingRef = null;
+let currentTeacherApprovedRef = null;
 let studentApprovedRef = null;
 
 function show(id) {
@@ -360,15 +361,16 @@ async function openTeacherSession(code) {
   currentCode = code;
   document.getElementById('teacher-session-code').textContent = code;
   show('view-teacher-session');
-  if (currentTeacherRef) currentTeacherRef.off();
-  currentTeacherRef = db.ref('sessions/' + code);
-  currentTeacherRef.on('value', snap => {
-    const data = snap.val() || { pending: {}, approved: {} };
-    renderPending(data.pending || {});
-    renderApproved(data.approved || {});
-  }, err => {
-    alert("Couldn't open this session: " + err.message);
-  });
+  if (currentTeacherPendingRef) currentTeacherPendingRef.off();
+  if (currentTeacherApprovedRef) currentTeacherApprovedRef.off();
+  currentTeacherPendingRef = db.ref('sessions/' + code + '/pending');
+  currentTeacherApprovedRef = db.ref('sessions/' + code + '/approved');
+  currentTeacherPendingRef.on('value', snap => {
+    renderPending(snap.val() || {});
+  }, err => alert("Couldn't load pending answers: " + err.message));
+  currentTeacherApprovedRef.on('value', snap => {
+    renderApproved(snap.val() || {});
+  }, err => alert("Couldn't load approved answers: " + err.message));
 }
 
 function renderPending(pendingObj) {
@@ -494,10 +496,14 @@ async function submitAnswer() {
   const btn = document.getElementById('submit-answer-btn');
   btn.disabled = true; btn.textContent = 'Sending…';
   const id = genId();
-  await db.ref('sessions/' + currentCode + '/pending/' + id).set({ text, submittedAt: Date.now() });
+  try {
+    await db.ref('sessions/' + currentCode + '/pending/' + id).set({ text, submittedAt: Date.now() });
+    document.getElementById('submitted-banner').classList.remove('hidden');
+    textEl.value = '';
+  } catch (err) {
+    alert("Couldn't submit: " + err.message);
+  }
   btn.disabled = false; btn.textContent = 'Submit answer';
-  document.getElementById('submitted-banner').classList.remove('hidden');
-  textEl.value = '';
 }
 
 function escapeHtml(str) {
