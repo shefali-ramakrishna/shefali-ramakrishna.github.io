@@ -364,9 +364,13 @@ async function loadMySessions() {
 async function deleteSession(code) {
   if (!confirm('Delete session ' + code + '? This removes all its data permanently.')) return;
   try {
+    const pendingSnap = await db.ref('sessions/' + code + '/pending').get();
+    const pendingObj = pendingSnap.val() || {};
+    for (const id of Object.keys(pendingObj)) {
+      await db.ref('sessions/' + code + '/pending/' + id).remove();
+    }
     await db.ref('sessions/' + code + '/meta').remove();
     await db.ref('sessions/' + code + '/exists').remove();
-    await db.ref('sessions/' + code + '/pending').remove();
     await db.ref('sessions/' + code + '/approved').remove();
     await db.ref('sessions/' + code + '/createdAt').remove();
     await db.ref('sessions/' + code + '/hostUid').remove();
