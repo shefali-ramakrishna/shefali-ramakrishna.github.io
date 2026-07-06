@@ -345,6 +345,7 @@ async function startNewSession() {
   try {
     await db.ref('sessions/' + code + '/hostUid').set(currentUser.uid);
     await db.ref('sessions/' + code + '/createdAt').set(Date.now());
+    await db.ref('sessions/' + code + '/exists').set(true);
     await db.ref('hostSessions/' + currentUser.uid + '/' + code).set(Date.now());
     btn.disabled = false; btn.textContent = 'Start new session';
     openTeacherSession(code);
@@ -451,9 +452,16 @@ async function tryJoinSession() {
   const btn = document.getElementById('join-btn');
   if (code.length !== 4) return;
   btn.disabled = true; btn.textContent = 'Checking…';
-  const snap = await db.ref('sessions/' + code).get();
+  let snap;
+  try {
+    snap = await db.ref('sessions/' + code + '/exists').get();
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Join';
+    errEl.textContent = "Couldn't check that code: " + e.message;
+    return;
+  }
   btn.disabled = false; btn.textContent = 'Join';
-  if (!snap.exists()) {
+  if (!snap.val()) {
     errEl.textContent = "That code isn't active. Double-check with your host.";
     return;
   }
