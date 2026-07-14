@@ -181,6 +181,21 @@
     </div>
   </div>
   <div class="lb-section-label"><span>Waiting for approval</span><span class="lb-count-pill" id="pending-count">0</span></div>
+  <div class="lb-row" style="justify-content:space-between; margin-bottom:14px;">
+    <button class="lb-btn" onclick="summarizePending()" id="summarize-btn">Summarize with AI</button>
+  </div>
+  <div id="summary-box" class="lb-card hidden" style="margin-bottom:16px; background:var(--paper);"></div>
+  <div id="pending-bulk-bar" class="lb-row hidden" style="justify-content:space-between; margin-bottom:10px;">
+    <div class="lb-row">
+      <button class="lb-btn lb-ghost" style="padding:8px 12px; font-size:11px;" onclick="selectAllPending()">Select all</button>
+      <button class="lb-btn lb-ghost" style="padding:8px 12px; font-size:11px;" onclick="deselectAllPending()">Deselect all</button>
+      <span class="lb-sub" style="margin-top:0;"><span id="selected-count">0</span> selected</span>
+    </div>
+    <div class="lb-row">
+      <button class="lb-btn" style="padding:8px 14px;" onclick="approveSelected()">Approve selected</button>
+      <button class="lb-btn lb-ghost" style="padding:8px 14px; border-color:var(--danger); color:var(--danger);" onclick="rejectSelected()">Reject selected</button>
+    </div>
+  </div>
   <div id="pending-list"></div>
   <div class="lb-section-label"><span>On screen now</span><span class="lb-count-pill" id="approved-count">0</span></div>
   <button class="lb-btn lb-ghost" id="clear-screen-btn" style="margin-bottom:12px" onclick="clearApproved()">Clear screen</button>
@@ -227,6 +242,8 @@
     </div>
     <div class="lb-sub" style="margin-top:10px">Your name is never collected — this is fully anonymous.</div>
   </div>
+  <div class="lb-section-label"><span>My submissions</span></div>
+  <div id="my-submissions-list"></div>
   <div class="lb-section-label"><span>On screen</span></div>
   <div id="student-approved-grid"></div>
 </div>
@@ -256,6 +273,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script>
 <script>
 // ---- PASTE YOUR FIREBASE CONFIG HERE ----
 const firebaseConfig = {
@@ -270,6 +288,8 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 
 const db = firebase.database();
+const functions = firebase.functions();
+const summarizeQuestionsFn = functions.httpsCallable('summarizeQuestions');
 const auth = firebase.auth();
 let currentUser = null;
 auth.onAuthStateChanged(u => {
@@ -359,6 +379,30 @@ async function loadMySessions() {
   } catch (e) {
     listEl.innerHTML = '<div class="lb-empty">Couldn\'t load past sessions: ' + e.message + '</div>';
   }
+}
+
+async function summarizePending() {
+  const texts = Object.values(lastPendingObj).map(item => item.text).filter(Boolean);
+  if (texts.length === 0) {
+    alert('No pending submissions to summarize.');
+    return;
+  }
+  const btn = document.getElementById('summarize-btn');
+  const box = document.getElementById('summary-box');
+  btn.disabled = true; btn.textContent = 'Summarizing…';
+  box.classList.remove('hidden');
+  box.innerHTML = '<div class="lb-empty">Thinking…</div>';
+  try {
+    const result = await summarizeQuestionsFn({ texts });
+    const { summary, countUsed, countTotal } = result.data;
+    const noteHtml = countUsed < countTotal
+      ? `<div class="lb-sub" style="margin-bottom:8px;">Summarized ${countUsed} of ${countTotal} submissions (capped for cost/size).</div>`
+      : `<div class="lb-sub" style="margin-bottom:8px;">Summarized all ${countUsed} submissions.</div>`;
+    box.innerHTML = noteHtml + `<div style="white-space:pre-wrap; font-size:15px; line-height:1.5;">${escapeHtml(summary)}</div>`;
+  } catch (err) {
+    box.innerHTML = `<div class="lb-sub" style="color:var(--danger);">Couldn't summarize: ${err.message}</div>`;
+  }
+  btn.disabled = false; btn.textContent = 'Summarize with AI';
 }
 
 async function deleteSession(code) {
@@ -454,16 +498,35 @@ function renderQuestionBlock(context, meta) {
   }
 }
 
+let selectedPendingIds = new Set();
+let lastPendingObj = {};
+
 function renderPending(pendingObj) {
+  lastPendingObj = pendingObj;
   const entries = Object.entries(pendingObj);
   document.getElementById('pending-count').textContent = entries.length;
   const list = document.getElementById('pending-list');
+  const bulkBar = document.getElementById('pending-bulk-bar');
   if (entries.length === 0) {
     list.innerHTML = '<div class="lb-empty">No submissions yet.</div>';
+    bulkBar.classList.add('hidden');
+    selectedPendingIds.clear();
     return;
   }
+  // Default: newly seen ids start selected (checked = will be approved in bulk action)
+  const currentIds = new Set(entries.map(([id]) => id));
+  for (const id of currentIds) {
+    if (!selectedPendingIds.has(id) && !everSeenPendingIds.has(id)) selectedPendingIds.add(id);
+    everSeenPendingIds.add(id);
+  }
+  for (const id of Array.from(selectedPendingIds)) {
+    if (!currentIds.has(id)) selectedPendingIds.delete(id);
+  }
+  bulkBar.classList.remove('hidden');
+  document.getElementById('selected-count').textContent = selectedPendingIds.size;
   list.innerHTML = entries.map(([id, item]) => `
     <div class="lb-answer-card">
+      <input type="checkbox" style="margin-top:4px;" ${selectedPendingIds.has(id) ? 'checked' : ''} onchange="togglePendingSelect('${id}', this.checked)">
       <div class="lb-answer-text">${escapeHtml(item.text)}</div>
       <div class="lb-answer-actions">
         <button class="lb-icon-btn approve" onclick="approveAnswer('${id}')" title="Approve">✓</button>
@@ -472,6 +535,35 @@ function renderPending(pendingObj) {
     </div>`).join('');
   if (window.MathJax && window.MathJax.typesetPromise) {
     window.MathJax.typesetPromise([list]).catch(() => {});
+  }
+}
+
+let everSeenPendingIds = new Set();
+
+function togglePendingSelect(id, checked) {
+  if (checked) selectedPendingIds.add(id); else selectedPendingIds.delete(id);
+  document.getElementById('selected-count').textContent = selectedPendingIds.size;
+}
+
+function selectAllPending() {
+  Object.keys(lastPendingObj).forEach(id => selectedPendingIds.add(id));
+  renderPending(lastPendingObj);
+}
+function deselectAllPending() {
+  selectedPendingIds.clear();
+  renderPending(lastPendingObj);
+}
+
+async function approveSelected() {
+  const ids = Array.from(selectedPendingIds);
+  for (const id of ids) {
+    await approveAnswer(id);
+  }
+}
+async function rejectSelected() {
+  const ids = Array.from(selectedPendingIds);
+  for (const id of ids) {
+    await rejectAnswer(id);
   }
 }
 
@@ -502,7 +594,13 @@ async function approveAnswer(id) {
   await ref.child('pending/' + id).remove();
 }
 async function rejectAnswer(id) {
-  await db.ref('sessions/' + currentCode + '/pending/' + id).remove();
+  const ref = db.ref('sessions/' + currentCode);
+  const snap = await ref.child('pending/' + id).get();
+  const item = snap.val();
+  await ref.child('pending/' + id).remove();
+  if (item) {
+    await ref.child('rejected/' + id).set({ rejectedAt: Date.now() });
+  }
 }
 async function clearApproved() {
   await db.ref('sessions/' + currentCode + '/approved').remove();
@@ -565,6 +663,8 @@ async function tryJoinSession() {
   document.getElementById('answer-text').value = '';
   document.getElementById('submitted-banner').classList.add('hidden');
   show('view-student-submit');
+  mySubmissions = [];
+  renderMySubmissions();
   db.ref('sessions/' + code + '/meta').get()
     .then(metaSnap => renderQuestionBlock('student', metaSnap.val()))
     .catch(() => renderQuestionBlock('student', null));
@@ -586,6 +686,39 @@ async function tryJoinSession() {
       window.MathJax.typesetPromise([grid]).catch(() => {});
     }
   });
+}
+
+let mySubmissions = []; // { id, text, status }
+
+function trackMySubmission(id, text) {
+  const entry = { id, text, status: 'pending' };
+  mySubmissions.unshift(entry);
+  renderMySubmissions();
+  const code = currentCode;
+  db.ref('sessions/' + code + '/approved/' + id).on('value', snap => {
+    if (snap.exists()) { entry.status = 'approved'; renderMySubmissions(); }
+  });
+  db.ref('sessions/' + code + '/rejected/' + id).on('value', snap => {
+    if (snap.exists()) { entry.status = 'not selected'; renderMySubmissions(); }
+  });
+}
+
+function renderMySubmissions() {
+  const listEl = document.getElementById('my-submissions-list');
+  if (!listEl) return;
+  if (mySubmissions.length === 0) {
+    listEl.innerHTML = '<div class="lb-empty">Nothing submitted yet this session.</div>';
+    return;
+  }
+  const statusColor = { pending: 'var(--amber)', approved: 'var(--moss)', 'not selected': 'var(--danger)' };
+  listEl.innerHTML = mySubmissions.map(e => `
+    <div class="lb-answer-card">
+      <div class="lb-answer-text">${escapeHtml(e.text)}</div>
+      <div class="lb-sub" style="margin-top:0; text-transform:uppercase; font-family:'Courier New',monospace; font-size:11px; color:${statusColor[e.status]};">${e.status}</div>
+    </div>`).join('');
+  if (window.MathJax && window.MathJax.typesetPromise) {
+    window.MathJax.typesetPromise([listEl]).catch(() => {});
+  }
 }
 
 function updateCharCount() {
@@ -617,6 +750,7 @@ async function submitAnswer() {
     await db.ref('sessions/' + currentCode + '/pending/' + id).set({ text, submittedAt: Date.now() });
     lastSubmitTime = now;
     document.getElementById('submitted-banner').classList.remove('hidden');
+    trackMySubmission(id, text);
     textEl.value = '';
     updateCharCount();
   } catch (err) {
