@@ -160,6 +160,8 @@
         <div class="lb-sub" style="margin-bottom:4px;">Preview:</div>
         <div id="question-preview" class="lb-card" style="background:var(--paper); padding:14px 16px; font-size:16px; line-height:1.5;"></div>
       </div>
+      <div class="lb-sub" style="margin-bottom:6px;">Custom code (optional — e.g. 0000 for an always-open Q&amp;A; leave blank for random)</div>
+      <input type="text" id="new-session-custom-code" placeholder="e.g. 0000" maxlength="4" style="margin-bottom:14px; max-width:160px;" oninput="this.value=this.value.replace(/\D/g,'')">
       <button class="lb-btn" onclick="startNewSession()" id="start-session-btn">Start new session</button>
       <div class="lb-section-label" style="margin-top:28px">Your recent sessions</div>
       <div id="my-sessions-list"><div class="lb-empty">Loading…</div></div>
@@ -253,7 +255,7 @@
     <div style="margin-top:12px">
       <button class="lb-btn" onclick="submitAnswer()" id="submit-answer-btn">Submit answer</button>
     </div>
-    <div class="lb-sub" style="margin-top:10px">Your name is never collected. This is fully anonymous, so please feel free to ask a question!!</div>
+    <div class="lb-sub" style="margin-top:10px">Your name is never collected — this is fully anonymous.</div>
   </div>
   <div class="lb-section-label"><span>My submissions</span></div>
   <div id="my-submissions-list"></div>
@@ -473,8 +475,9 @@ async function startNewSession() {
   const btn = document.getElementById('start-session-btn');
   const title = document.getElementById('new-session-title').value.trim();
   const question = document.getElementById('new-session-question').value.trim();
+  const customCodeInput = document.getElementById('new-session-custom-code').value.trim();
   btn.disabled = true; btn.textContent = 'Starting…';
-  const code = genCode();
+  const code = (customCodeInput.length === 4) ? customCodeInput : genCode();
   try {
     await db.ref('sessions/' + code + '/hostUid').set(currentUser.uid);
     await db.ref('sessions/' + code + '/createdAt').set(Date.now());
@@ -484,11 +487,16 @@ async function startNewSession() {
     btn.disabled = false; btn.textContent = 'Start new session';
     document.getElementById('new-session-title').value = '';
     document.getElementById('new-session-question').value = '';
+    document.getElementById('new-session-custom-code').value = '';
     document.getElementById('question-preview-wrap').classList.add('hidden');
     openTeacherSession(code);
   } catch (err) {
     btn.disabled = false; btn.textContent = 'Start new session';
-    alert('Could not start session: ' + err.message);
+    if (err.message && err.message.toLowerCase().includes('permission')) {
+      alert("That code is already in use by a different session you don't own. Try a different custom code.");
+    } else {
+      alert('Could not start session: ' + err.message);
+    }
   }
 }
 
