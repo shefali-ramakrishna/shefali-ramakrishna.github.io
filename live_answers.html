@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Live Answers</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>✎</text></svg>">
 <style>
   :root {
     --ink: #1c2b2d;
@@ -122,10 +123,9 @@
 <body>
 
 <div id="view-role" class="lb-shell">
-  <div class="lb-eyebrow">Live Answers</div>
-  <h1 class="lb-title">Anonymous, on-screen, approved by you</h1>
+  <h1 class="lb-title">Anonymous Live Questions + Answers!</h1>
   <div class="lb-card">
-    <p class="lb-sub" style="margin-top:0">Students post answers from their phones. Nothing appears on the big screen until you approve it.</p>
+    <p class="lb-sub" style="margin-top:0">You can post using your phone.</p>
     <div class="lb-role-grid">
       <button class="lb-role-btn" onclick="goTeacherHome()">
         <span class="lb-role-label">Host</span>
@@ -155,7 +155,11 @@
       <div class="lb-sub" style="margin-bottom:6px;">Session title (e.g. "Lecture 12")</div>
       <input type="text" id="new-session-title" placeholder="Lecture 12" style="margin-bottom:14px;">
       <div class="lb-sub" style="margin-bottom:6px;">Question — LaTeX ok, use $...$ for inline math</div>
-      <textarea class="lb-textarea" id="new-session-question" placeholder="e.g. Compute $\int_0^1 x^2\,dx$" style="margin-bottom:14px;"></textarea>
+      <textarea class="lb-textarea" id="new-session-question" placeholder="e.g. Compute $\int_0^1 x^2\,dx$" style="margin-bottom:8px;" oninput="updateQuestionPreview()"></textarea>
+      <div id="question-preview-wrap" class="hidden" style="margin-bottom:14px;">
+        <div class="lb-sub" style="margin-bottom:4px;">Preview:</div>
+        <div id="question-preview" class="lb-card" style="background:var(--paper); padding:14px 16px; font-size:16px; line-height:1.5;"></div>
+      </div>
       <button class="lb-btn" onclick="startNewSession()" id="start-session-btn">Start new session</button>
       <div class="lb-section-label" style="margin-top:28px">Your recent sessions</div>
       <div id="my-sessions-list"><div class="lb-empty">Loading…</div></div>
@@ -203,11 +207,20 @@
 </div>
 
 <div id="view-display" class="lb-display hidden">
-  <div class="lb-display-header">
-    <h1 id="display-title">Live answers</h1>
-    <div class="lb-display-code">join at this page with code <span id="display-code"></span></div>
+  <div class="lb-display-header" style="flex-direction:column; align-items:flex-start; gap:14px;">
+    <h1 id="display-title" style="margin:0;">Live answers</h1>
+    <div style="display:flex; align-items:baseline; gap:24px; flex-wrap:wrap;">
+      <div>
+        <div style="font-family:'Courier New',monospace; font-size:13px; letter-spacing:0.1em; text-transform:uppercase; color:var(--chalk); opacity:0.7; margin-bottom:4px;">Join at</div>
+        <div style="font-family:'Courier New',monospace; font-size:20px; color:var(--chalk);">shefali.link/live_answers.html</div>
+      </div>
+      <div>
+        <div style="font-family:'Courier New',monospace; font-size:13px; letter-spacing:0.1em; text-transform:uppercase; color:var(--chalk); opacity:0.7; margin-bottom:4px;">Code</div>
+        <div style="font-family:'Courier New',monospace; font-size:64px; font-weight:bold; letter-spacing:0.08em; color:var(--amber); line-height:1;" id="display-code"></div>
+      </div>
+    </div>
   </div>
-  <div id="display-question" style="font-size:20px; line-height:1.5; margin-bottom:28px; color:var(--chalk);"></div>
+  <div id="display-question" style="font-size:20px; line-height:1.5; margin-bottom:28px; margin-top:20px; color:var(--chalk);"></div>
   <div class="lb-display-grid" id="display-grid"></div>
 </div>
 
@@ -240,7 +253,7 @@
     <div style="margin-top:12px">
       <button class="lb-btn" onclick="submitAnswer()" id="submit-answer-btn">Submit answer</button>
     </div>
-    <div class="lb-sub" style="margin-top:10px">Your name is never collected — this is fully anonymous.</div>
+    <div class="lb-sub" style="margin-top:10px">Your name is never collected. This is fully anonymous, so please feel free to ask a question!!</div>
   </div>
   <div class="lb-section-label"><span>My submissions</span></div>
   <div id="my-submissions-list"></div>
@@ -408,6 +421,12 @@ async function summarizePending() {
 async function deleteSession(code) {
   if (!confirm('Delete session ' + code + '? This removes all its data permanently.')) return;
   try {
+    // Detach any live listeners on this session so they don't fire permission errors
+    // once hostUid is removed mid-deletion.
+    if (currentCode === code) {
+      if (currentTeacherPendingRef) { currentTeacherPendingRef.off(); currentTeacherPendingRef = null; }
+      if (currentTeacherApprovedRef) { currentTeacherApprovedRef.off(); currentTeacherApprovedRef = null; }
+    }
     const pendingSnap = await db.ref('sessions/' + code + '/pending').get();
     const pendingObj = pendingSnap.val() || {};
     for (const id of Object.keys(pendingObj)) {
@@ -417,12 +436,36 @@ async function deleteSession(code) {
     await db.ref('sessions/' + code + '/exists').remove();
     await db.ref('sessions/' + code + '/approved').remove();
     await db.ref('sessions/' + code + '/createdAt').remove();
+    const rejectedSnap = await db.ref('sessions/' + code + '/rejected').get().catch(() => null);
+    const rejectedObj = (rejectedSnap && rejectedSnap.val()) || {};
+    for (const id of Object.keys(rejectedObj)) {
+      await db.ref('sessions/' + code + '/rejected/' + id).remove().catch(() => {});
+    }
     await db.ref('sessions/' + code + '/hostUid').remove();
     await db.ref('hostSessions/' + currentUser.uid + '/' + code).remove();
     loadMySessions();
   } catch (err) {
     alert("Couldn't delete session: " + err.message);
   }
+}
+
+let questionPreviewTimer = null;
+function updateQuestionPreview() {
+  clearTimeout(questionPreviewTimer);
+  questionPreviewTimer = setTimeout(() => {
+    const text = document.getElementById('new-session-question').value.trim();
+    const wrap = document.getElementById('question-preview-wrap');
+    const preview = document.getElementById('question-preview');
+    if (!text) {
+      wrap.classList.add('hidden');
+      return;
+    }
+    wrap.classList.remove('hidden');
+    preview.innerHTML = escapeHtml(text).replace(/\n/g, '<br>');
+    if (window.MathJax && window.MathJax.typesetPromise) {
+      window.MathJax.typesetPromise([preview]).catch(() => {});
+    }
+  }, 400);
 }
 
 async function startNewSession() {
@@ -441,6 +484,7 @@ async function startNewSession() {
     btn.disabled = false; btn.textContent = 'Start new session';
     document.getElementById('new-session-title').value = '';
     document.getElementById('new-session-question').value = '';
+    document.getElementById('question-preview-wrap').classList.add('hidden');
     openTeacherSession(code);
   } catch (err) {
     btn.disabled = false; btn.textContent = 'Start new session';
